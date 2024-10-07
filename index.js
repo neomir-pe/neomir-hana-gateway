@@ -9,6 +9,10 @@ const port = 3001; // You can use any available port
 app.use(express.json());
 app.use(cors({ origin: "http://localhost:3000" }));
 
+app.get("/", (req, res) => {
+  res.send("Neomir HANA Gateway Server");
+});
+
 // Route to handle database queries
 app.post("/", (req, res) => {
   const connection = hana.createConnection();
