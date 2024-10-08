@@ -7,7 +7,28 @@ const port = 3001; // You can use any available port
 
 // Middleware to parse JSON request bodies
 app.use(express.json());
-app.use(cors({ origin: "http://localhost:3000" }));
+const allowedOrigins = [
+  "http://localhost:3000",
+  "https://neomir.app",
+  "https://neomir.dev",
+  "https://*.vercel.app",
+];
+
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      // Check if the origin is in the list of allowed origins or matches a pattern
+      if (
+        allowedOrigins.includes(origin) ||
+        /https:\/\/.*\.vercel\.app/.test(origin)
+      ) {
+        callback(null, true);
+      } else {
+        callback(new Error("Not allowed by CORS"));
+      }
+    },
+  })
+);
 
 app.get("/", (req, res) => {
   res.send("Neomir HANA Gateway Server");
