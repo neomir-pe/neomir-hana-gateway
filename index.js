@@ -1,9 +1,13 @@
 const express = require("express");
 const cors = require("cors");
 const hana = require("@sap/hana-client");
+const crypto = require("crypto");
+const dotenv = require("dotenv");
+
+dotenv.config(); // Load .env variables
 
 const app = express();
-const port = 3001; // You can use any available port
+const port = process.env.PORT || 3000;
 
 // Middleware to parse JSON request bodies
 app.use(express.json());
@@ -24,7 +28,12 @@ app.use(
       ) {
         callback(null, true);
       } else {
-        callback(new Error("Not allowed by CORS"));
+        if (!origin) {
+          // For requests without an origin (like Postman), allow them
+          callback(null, true);
+        } else {
+          callback(new Error("Not allowed by CORS"));
+        }
       }
     },
   })
@@ -42,6 +51,7 @@ app.post("/", (req, res) => {
     if (mode === "TEST") {
       return res.json({ message: "Connection to proxy established" });
     }
+
     connection.connect(connParams, (err) => {
       if (err) {
         console.error("Connection error", err);
@@ -53,7 +63,6 @@ app.post("/", (req, res) => {
           },
         });
       }
-      console.log("Connected to SAP HANA");
 
       // Execute the query
       connection.exec(query, (err, result) => {
