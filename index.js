@@ -128,15 +128,21 @@ function execQueryAsync(connection, query) {
 // Route to handle database queries, with decryption of credentials.
 app.post("/", async (req, res) => {
   // Extract query, mode, and encrypted credentials from request body.
-  const { query, encrypted_user, encrypted_password, ...connParams } = req.body;
+  const { query, ...params } = req.body;
+
+  let connectionParams = {
+    user: "",
+    password: "",
+    ...params,
+  };
 
   // Decrypt credentials if provided.
   try {
-    if (encrypted_user) {
-      connParams.user = decrypt(encrypted_user);
+    if (params.encrypted_user) {
+      connectionParams.user = decrypt(params.encrypted_user);
     }
-    if (encrypted_password) {
-      connParams.password = decrypt(encrypted_password);
+    if (params.encrypted_password) {
+      connectionParams.password = decrypt(params.encrypted_password);
     }
   } catch (error) {
     console.error("Decryption error:", error);
@@ -151,7 +157,7 @@ app.post("/", async (req, res) => {
 
   let connection;
   try {
-    connection = await connectAsync(connParams);
+    connection = await connectAsync(connectionParams);
     const result = await execQueryAsync(connection, query);
     res.json({ data: result });
   } catch (errObj) {
