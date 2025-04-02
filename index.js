@@ -4,37 +4,33 @@ const hana = require("@sap/hana-client");
 const crypto = require("crypto");
 const dotenv = require("dotenv");
 
-dotenv.config(); // Load .env variables
+dotenv.config({ path: ".env.local" }); // Load .env variables
 
 const app = express();
 const port = process.env.PORT || 3000;
 
 // Middleware to parse JSON request bodies
 app.use(express.json());
+
+// Define allowed origins and regex for pattern-based origins
 const allowedOrigins = [
   "http://localhost:3000",
   "https://neomir.app",
   "https://neomir.dev",
-  "https://*.vercel.app",
 ];
+const vercelOriginRegex = /^https:\/\/.*\.vercel\.app$/;
 
 app.use(
   cors({
     origin: (origin, callback) => {
-      // Check if the origin is in the list of allowed origins or matches a pattern
       if (
+        !origin ||
         allowedOrigins.includes(origin) ||
-        /https:\/\/.*\.vercel\.app/.test(origin)
+        vercelOriginRegex.test(origin)
       ) {
-        callback(null, true);
-      } else {
-        if (!origin) {
-          // For requests without an origin (like Postman), allow them
-          callback(null, true);
-        } else {
-          callback(new Error("Not allowed by CORS"));
-        }
+        return callback(null, true);
       }
+      callback(new Error("Not allowed by CORS"));
     },
   })
 );
@@ -43,59 +39,157 @@ app.get("/", (req, res) => {
   res.send("Neomir HANA Gateway Server");
 });
 
-// Route to handle database queries
-app.post("/", (req, res) => {
-  const connection = hana.createConnection();
+//#region Credentials Encryption
+// Your credentials will be encrypted using AES-256-CBC, which requires a 32-byte key and a 16-byte IV.
+// To generate the DECRYPTION_KEY, visit https://www.random.org/cgi-bin/randbyte?nbytes=32&format=h
+// To generate a random DECRYPTION_IV, visit https://www.random.org/cgi-bin/randbyte?nbytes=16&format=h
+
+function encrypt(text) {
+  const keyHex = process.env.DECRYPTION_KEY;
+  const ivHex = process.env.DECRYPTION_IV;
+  if (!keyHex || !ivHex) {
+    throw new Error("Decryption key or IV not configured in .local.env file");
+  }
+  const key = Buffer.from(keyHex, "hex");
+  const iv = Buffer.from(ivHex, "hex");
+  const cipher = crypto.createCipheriv("aes-256-cbc", key, iv);
+  let encrypted = cipher.update(text, "utf8", "base64");
+  encrypted += cipher.final("base64");
+  return encrypted;
+}
+
+app.post("/encrypt", (req, res) => {
+  const { user, password } = req.body;
+
+  if (!user || !password) {
+    return res.status(400).json({
+      error: "Missing user or password in request body.",
+    });
+  }
+
   try {
-    const { query, mode, ...connParams } = req.body;
-    if (mode === "TEST") {
-      return res.json({ message: "Connection to proxy established" });
-    }
-
-    connection.connect(connParams, (err) => {
-      if (err) {
-        console.error("Connection error", err);
-        return res.status(500).json({
-          error: {
-            type: "Connect Error",
-            message: err.message,
-            details: err,
-          },
-        });
-      }
-
-      // Execute the query
-      connection.exec(query, (err, result) => {
-        if (err) {
-          console.error("Query error", err);
-          connection.disconnect(); // Ensure connection is closed on error
-          return res.status(500).json({
-            error: {
-              type: "Query Error",
-              message: err.message,
-              details: err,
-            },
-          });
-        }
-
-        res.json({ data: result });
-        connection.disconnect(); // Ensure connection is closed after response
-      });
-    });
-  } catch (err) {
-    console.error("Error:", err);
-    res.status(500).json({
-      error: {
-        type: "Internal server error",
-        message: err.message,
-        details: err,
-      },
-    });
-    connection.disconnect(); // Ensure connection is closed on catch block error
+    const encryptedUser = encrypt(user);
+    const encryptedPassword = encrypt(password);
+    res.json({ encryptedUser, encryptedPassword });
+  } catch (error) {
+    console.error("Encryption error:", error);
+    res.status(500).json({ error: error.message });
   }
 });
+//#endregion
 
-// Start the server
+//#region Query Execution
+// Helper function to decrypt text using AES-256-CBC.
+// Assumes the encrypted text is base64 encoded.
+function decrypt(encryptedText) {
+  console.log("DECRYPTION_KEY", process.env.DECRYPTION_KEY);
+  console.log("DECRYPTION_IV", process.env.DECRYPTION_IV);
+  const keyHex = process.env.DECRYPTION_KEY;
+  const ivHex = process.env.DECRYPTION_IV;
+  if (!keyHex || !ivHex) {
+    throw new Error("Decryption key or IV not configured in .env");
+  }
+  const key = Buffer.from(keyHex, "hex");
+  const iv = Buffer.from(ivHex, "hex");
+  const decipher = crypto.createDecipheriv("aes-256-cbc", key, iv);
+  let decrypted = decipher.update(encryptedText, "base64", "utf8");
+  decrypted += decipher.final("utf8");
+  return decrypted;
+}
+
+// Promisified function for connecting to HANA
+function connectAsync(connParams) {
+  const connection = hana.createConnection();
+  return new Promise((resolve, reject) => {
+    connection.connect(connParams, (err) => {
+      if (err) {
+        return reject({ error: err, connection });
+      }
+      resolve(connection);
+    });
+  });
+}
+
+// Promisified function for executing a query
+function execQueryAsync(connection, query) {
+  return new Promise((resolve, reject) => {
+    connection.exec(query, (err, result) => {
+      if (err) {
+        return reject({ error: err, connection });
+      }
+      resolve(result);
+    });
+  });
+}
+
+// Route to handle database queries, with decryption of credentials.
+app.post("/", async (req, res) => {
+  // Extract query, mode, and encrypted credentials from request body.
+  const { query, mode, user, password, ...connParams } = req.body;
+
+  // TEST mode to verify connection without needing credentials.
+  console.log("mode", mode);
+  if (mode === "TEST") {
+    return res.json({ message: "Connection to proxy established" });
+  }
+
+  // Decrypt credentials if provided.
+  try {
+    if (user) {
+      connParams.user = decrypt(user);
+    }
+    if (password) {
+      connParams.password = decrypt(password);
+    }
+  } catch (error) {
+    console.error("Decryption error:", error);
+    return res.status(400).json({
+      error: {
+        type: "Decryption Error",
+        message: error.message,
+        details: error,
+      },
+    });
+  }
+
+  let connection;
+  try {
+    connection = await connectAsync(connParams);
+    const result = await execQueryAsync(connection, query);
+    res.json({ data: result });
+  } catch (errObj) {
+    const { error } = errObj;
+    console.error("Error:", error);
+    res.status(500).json({
+      error: {
+        type: error.name || "Internal Server Error",
+        message: error.message,
+        details: error,
+      },
+    });
+  } finally {
+    // Ensure that the connection is closed if it was opened.
+    if (connection) {
+      connection.disconnect();
+    }
+  }
+});
+//#endregion
+
+//#region Error Handling
+// Global error-handling middleware for uncaught errors.
+app.use((err, req, res, next) => {
+  console.error("Unhandled error:", err);
+  res.status(500).json({
+    error: {
+      type: "Unhandled Error",
+      message: err.message,
+      details: err,
+    },
+  });
+});
+//#endregion
+// Start the server.
 app.listen(port, () => {
   console.log(`Server running at http://localhost:${port}`);
 });
