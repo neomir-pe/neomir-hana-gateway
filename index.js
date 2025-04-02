@@ -7,7 +7,7 @@ const dotenv = require("dotenv");
 dotenv.config({ path: ".env.local" }); // Load .env variables
 
 const app = express();
-const port = process.env.PORT || 3000;
+const port = process.env.PORT || 3001;
 
 // Middleware to parse JSON request bodies
 app.use(express.json());
@@ -43,7 +43,7 @@ app.get("/", (req, res) => {
 // Your credentials will be encrypted using AES-256-CBC, which requires a 32-byte key and a 16-byte IV.
 // To generate the DECRYPTION_KEY, visit https://www.random.org/cgi-bin/randbyte?nbytes=32&format=h
 // To generate a random DECRYPTION_IV, visit https://www.random.org/cgi-bin/randbyte?nbytes=16&format=h
-
+//#region Helper Functions
 function encrypt(text) {
   const keyHex = process.env.DECRYPTION_KEY;
   const ivHex = process.env.DECRYPTION_IV;
@@ -57,7 +57,9 @@ function encrypt(text) {
   encrypted += cipher.final("base64");
   return encrypted;
 }
+//#endregion
 
+//#region Route Handler
 app.post("/encrypt", (req, res) => {
   const { user, password } = req.body;
 
@@ -77,13 +79,13 @@ app.post("/encrypt", (req, res) => {
   }
 });
 //#endregion
+//#endregion
 
 //#region Query Execution
+//#region Helper Functions
 // Helper function to decrypt text using AES-256-CBC.
 // Assumes the encrypted text is base64 encoded.
 function decrypt(encryptedText) {
-  console.log("DECRYPTION_KEY", process.env.DECRYPTION_KEY);
-  console.log("DECRYPTION_IV", process.env.DECRYPTION_IV);
   const keyHex = process.env.DECRYPTION_KEY;
   const ivHex = process.env.DECRYPTION_IV;
   if (!keyHex || !ivHex) {
@@ -121,25 +123,20 @@ function execQueryAsync(connection, query) {
     });
   });
 }
-
+//#endregion
+//#region Route Handler
 // Route to handle database queries, with decryption of credentials.
 app.post("/", async (req, res) => {
   // Extract query, mode, and encrypted credentials from request body.
-  const { query, mode, user, password, ...connParams } = req.body;
-
-  // TEST mode to verify connection without needing credentials.
-  console.log("mode", mode);
-  if (mode === "TEST") {
-    return res.json({ message: "Connection to proxy established" });
-  }
+  const { query, encrypted_user, encrypted_password, ...connParams } = req.body;
 
   // Decrypt credentials if provided.
   try {
-    if (user) {
-      connParams.user = decrypt(user);
+    if (encrypted_user) {
+      connParams.user = decrypt(encrypted_user);
     }
-    if (password) {
-      connParams.password = decrypt(password);
+    if (encrypted_password) {
+      connParams.password = decrypt(encrypted_password);
     }
   } catch (error) {
     console.error("Decryption error:", error);
@@ -175,6 +172,7 @@ app.post("/", async (req, res) => {
   }
 });
 //#endregion
+//#endregion
 
 //#region Error Handling
 // Global error-handling middleware for uncaught errors.
@@ -189,7 +187,8 @@ app.use((err, req, res, next) => {
   });
 });
 //#endregion
-// Start the server.
+
+// Start the server
 app.listen(port, () => {
   console.log(`Server running at http://localhost:${port}`);
 });
