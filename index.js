@@ -36,7 +36,7 @@ app.use(
 );
 
 app.get("/", (req, res) => {
-  res.send("Neomir HANA Gateway Server");
+  res.send("Neomir HANA Gateway Server!");
 });
 
 //#region Credentials Encryption
@@ -195,6 +195,20 @@ app.use((err, req, res, next) => {
 //#endregion
 
 // Start the server
-app.listen(port, () => {
-  console.log(`Server running at http://localhost:${port}`);
+const os = require("os");
+
+function getLocalIp() {
+  const interfaces = os.networkInterfaces();
+  for (const iface of Object.values(interfaces)) {
+    for (const config of iface) {
+      if (config.family === "IPv4" && !config.internal) {
+        return config.address;
+      }
+    }
+  }
+}
+
+const localIp = getLocalIp() || "localhost";
+app.listen(port, "0.0.0.0", () => {
+  console.log(`Server running at http://${localIp}:${port}`);
 });
