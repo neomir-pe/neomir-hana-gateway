@@ -3,5 +3,8 @@
 # dependencies
 /node_modules
 
+# ssl certificates
+/ssl
+
 # local env files
 .env*.local
