@@ -5,7 +5,15 @@ const cors = require("cors");
 const hana = require("@sap/hana-client");
 const crypto = require("crypto");
 const dotenv = require("dotenv");
+const os = require("os");
 
+// Load environment variables from .env.local file.
+dotenv.config({ path: ".env.local" });
+
+//#region SSL / HTTPS Configuration
+
+// Attempt to read SSL certificate and key for HTTPS.
+// If the certificates are not found, the server will continue in HTTP-only mode.
 let sslOptions;
 try {
   sslOptions = {
@@ -17,15 +25,18 @@ try {
   sslOptions = null;
 }
 
-dotenv.config({ path: ".env.local" }); // Load .env variables
+//#endregion
+
+//#region Express App & Middleware Setup
 
 const app = express();
-const http_port = process.env.HTTP_PORT || 80;
-const https_port = process.env.HTTPS_PORT || 443;
-// Middleware to parse JSON request bodies
+const httpPort = process.env.HTTP_PORT || 80;
+const httpsPort = process.env.HTTPS_PORT || 443;
+
+// Middleware: Parse JSON request bodies.
 app.use(express.json());
 
-// Define allowed origins and regex for pattern-based origins
+// Configure allowed origins for CORS requests.
 const allowedOrigins = [
   "http://localhost:3000",
   "https://neomir.app",
@@ -33,9 +44,11 @@ const allowedOrigins = [
 ];
 const vercelOriginRegex = /^https:\/\/.*\.vercel\.app$/;
 
+// Middleware: Configure CORS with a function to dynamically allow origins.
 app.use(
   cors({
     origin: (origin, callback) => {
+      // Allow requests with no origin (e.g., curl, Postman) or if origin is in the allowed list.
       if (
         !origin ||
         allowedOrigins.includes(origin) ||
@@ -43,25 +56,33 @@ app.use(
       ) {
         return callback(null, true);
       }
-      callback(new Error("Not allowed by CORS"));
+      return callback(new Error("Not allowed by CORS"));
     },
   })
 );
 
+// Simple GET route to confirm the server is running.
 app.get("/", (req, res) => {
   res.send("Neomir HANA Gateway Server!");
 });
 
-//#region Credentials Encryption
-// Your credentials will be encrypted using AES-256-CBC, which requires a 32-byte key and a 16-byte IV.
-// To generate the DECRYPTION_KEY, visit https://www.random.org/cgi-bin/randbyte?nbytes=32&format=h
-// To generate a random DECRYPTION_IV, visit https://www.random.org/cgi-bin/randbyte?nbytes=16&format=h
-//#region Helper Functions
+//#endregion
+
+//#region Credential Encryption & Decryption
+
+/**
+ * Encrypts a given text using AES-256-CBC.
+ * Uses environment variables DECRYPTION_KEY (32-byte hex) and DECRYPTION_IV (16-byte hex).
+ *
+ * @param {string} text - The plaintext to encrypt.
+ * @returns {string} - The encrypted text in base64 format.
+ * @throws Will throw an error if the key or IV is not properly configured.
+ */
 function encrypt(text) {
   const keyHex = process.env.DECRYPTION_KEY;
   const ivHex = process.env.DECRYPTION_IV;
   if (!keyHex || !ivHex) {
-    throw new Error("Decryption key or IV not configured in .local.env file");
+    throw new Error("Decryption key or IV not configured in .env.local file");
   }
   const key = Buffer.from(keyHex, "hex");
   const iv = Buffer.from(ivHex, "hex");
@@ -70,9 +91,31 @@ function encrypt(text) {
   encrypted += cipher.final("base64");
   return encrypted;
 }
-//#endregion
 
-//#region Route Handler
+/**
+ * Decrypts a given text using AES-256-CBC.
+ * Assumes the encrypted text is provided in base64 format.
+ *
+ * @param {string} encryptedText - The encrypted text in base64 format.
+ * @returns {string} - The decrypted plaintext.
+ * @throws Will throw an error if the key or IV is not properly configured.
+ */
+function decrypt(encryptedText) {
+  const keyHex = process.env.DECRYPTION_KEY;
+  const ivHex = process.env.DECRYPTION_IV;
+  if (!keyHex || !ivHex) {
+    throw new Error("Decryption key or IV not configured in .env.local file");
+  }
+  const key = Buffer.from(keyHex, "hex");
+  const iv = Buffer.from(ivHex, "hex");
+  const decipher = crypto.createDecipheriv("aes-256-cbc", key, iv);
+  let decrypted = decipher.update(encryptedText, "base64", "utf8");
+  decrypted += decipher.final("utf8");
+  return decrypted;
+}
+
+// Endpoint to encrypt provided user and password credentials.
+// To generate appropriate keys and IVs, visit the provided random.org links.
 app.post("/encrypt", (req, res) => {
   const { user, password } = req.body;
 
@@ -91,28 +134,17 @@ app.post("/encrypt", (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
-//#endregion
+
 //#endregion
 
-//#region Query Execution
-//#region Helper Functions
-// Helper function to decrypt text using AES-256-CBC.
-// Assumes the encrypted text is base64 encoded.
-function decrypt(encryptedText) {
-  const keyHex = process.env.DECRYPTION_KEY;
-  const ivHex = process.env.DECRYPTION_IV;
-  if (!keyHex || !ivHex) {
-    throw new Error("Decryption key or IV not configured in .env");
-  }
-  const key = Buffer.from(keyHex, "hex");
-  const iv = Buffer.from(ivHex, "hex");
-  const decipher = crypto.createDecipheriv("aes-256-cbc", key, iv);
-  let decrypted = decipher.update(encryptedText, "base64", "utf8");
-  decrypted += decipher.final("utf8");
-  return decrypted;
-}
+//#region HANA Database Query Execution
 
-// Promisified function for connecting to HANA
+/**
+ * Creates and returns a promise for connecting to the HANA database.
+ *
+ * @param {object} connParams - The connection parameters (user, password, etc.).
+ * @returns {Promise<object>} - Resolves with the HANA connection or rejects with an error.
+ */
 function connectAsync(connParams) {
   const connection = hana.createConnection();
   return new Promise((resolve, reject) => {
@@ -125,7 +157,13 @@ function connectAsync(connParams) {
   });
 }
 
-// Promisified function for executing a query
+/**
+ * Executes a SQL query on the provided HANA connection.
+ *
+ * @param {object} connection - The active HANA connection.
+ * @param {string} query - The SQL query string.
+ * @returns {Promise<any>} - Resolves with the query result or rejects with an error.
+ */
 function execQueryAsync(connection, query) {
   return new Promise((resolve, reject) => {
     connection.exec(query, (err, result) => {
@@ -136,20 +174,27 @@ function execQueryAsync(connection, query) {
     });
   });
 }
-//#endregion
-//#region Route Handler
-// Route to handle database queries, with decryption of credentials.
+
+/**
+ * Route handler for executing database queries.
+ *
+ * The request body should contain:
+ * - query: The SQL query to execute.
+ * - encrypted_user (optional): Encrypted database username.
+ * - encrypted_password (optional): Encrypted database password.
+ * - ...other connection parameters if needed.
+ */
 app.post("/", async (req, res) => {
-  // Extract query, mode, and encrypted credentials from request body.
   const { query, ...params } = req.body;
 
+  // Prepare connection parameters (credentials will be decrypted if provided).
   let connectionParams = {
     user: "",
     password: "",
     ...params,
   };
 
-  // Decrypt credentials if provided.
+  // Decrypt credentials if available.
   try {
     if (params.encrypted_user) {
       connectionParams.user = decrypt(params.encrypted_user);
@@ -175,7 +220,7 @@ app.post("/", async (req, res) => {
     res.json({ data: result });
   } catch (errObj) {
     const { error } = errObj;
-    console.error("Error:", error);
+    console.error("Database error:", error);
     res.status(500).json({
       error: {
         type: error.name || "Internal Server Error",
@@ -184,17 +229,18 @@ app.post("/", async (req, res) => {
       },
     });
   } finally {
-    // Ensure that the connection is closed if it was opened.
+    // Ensure the HANA connection is closed if it was opened.
     if (connection) {
       connection.disconnect();
     }
   }
 });
-//#endregion
+
 //#endregion
 
-//#region Error Handling
-// Global error-handling middleware for uncaught errors.
+//#region Global Error Handling
+
+// Global error-handling middleware for catching uncaught errors.
 app.use((err, req, res, next) => {
   console.error("Unhandled error:", err);
   res.status(500).json({
@@ -205,11 +251,16 @@ app.use((err, req, res, next) => {
     },
   });
 });
+
 //#endregion
 
-// Start the server
-const os = require("os");
+//#region Server Startup & Utility Functions
 
+/**
+ * Retrieves the first non-internal IPv4 address of the host machine.
+ *
+ * @returns {string} - Local IP address or "localhost" if not found.
+ */
 function getLocalIp() {
   const interfaces = os.networkInterfaces();
   for (const iface of Object.values(interfaces)) {
@@ -219,17 +270,22 @@ function getLocalIp() {
       }
     }
   }
+  return "localhost";
 }
 
-const localIp = getLocalIp() || "localhost";
+const localIp = getLocalIp();
 const hostname = os.hostname();
-app.listen(http_port, "0.0.0.0", () => {
-  console.log(`HTTP server running at http://${localIp}:${http_port}`);
+
+// Start the HTTP server.
+app.listen(httpPort, "0.0.0.0", () => {
+  console.log(`HTTP server running at http://${localIp}:${httpPort}`);
 });
 
-// Start HTTPS server only if SSL options are available
+// Start the HTTPS server only if SSL options are available.
 if (sslOptions) {
-  https.createServer(sslOptions, app).listen(https_port, () => {
-    console.log(`HTTPS server running at https://${hostname}:${https_port}`);
+  https.createServer(sslOptions, app).listen(httpsPort, () => {
+    console.log(`HTTPS server running at https://${hostname}:${httpsPort}`);
   });
 }
+
+//#endregion
