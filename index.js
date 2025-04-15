@@ -1,14 +1,21 @@
+const fs = require("fs");
+const https = require("https");
 const express = require("express");
 const cors = require("cors");
 const hana = require("@sap/hana-client");
 const crypto = require("crypto");
 const dotenv = require("dotenv");
 
+const sslOptions = {
+  key: fs.readFileSync("./ssl/server.key"),
+  cert: fs.readFileSync("./ssl/server.cert"),
+};
+
 dotenv.config({ path: ".env.local" }); // Load .env variables
 
 const app = express();
-const port = process.env.PORT || 3001;
-
+const http_port = process.env.HTTP_PORT || 80;
+const https_port = process.env.HTTPS_PORT || 443;
 // Middleware to parse JSON request bodies
 app.use(express.json());
 
@@ -209,6 +216,12 @@ function getLocalIp() {
 }
 
 const localIp = getLocalIp() || "localhost";
-app.listen(port, "0.0.0.0", () => {
-  console.log(`Server running at http://${localIp}:${port}`);
+const hostname = os.hostname();
+app.listen(http_port, "0.0.0.0", () => {
+  console.log(`HTTP server running at http://${localIp}:${http_port}`);
+});
+
+// Start HTTPS server
+https.createServer(sslOptions, app).listen(https_port, () => {
+  console.log(`HTTPS server running at https://${hostname}:${https_port}`);
 });
