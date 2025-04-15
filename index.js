@@ -6,10 +6,16 @@ const hana = require("@sap/hana-client");
 const crypto = require("crypto");
 const dotenv = require("dotenv");
 
-const sslOptions = {
-  key: fs.readFileSync("./ssl/server.key"),
-  cert: fs.readFileSync("./ssl/server.cert"),
-};
+let sslOptions;
+try {
+  sslOptions = {
+    key: fs.readFileSync("./ssl/server.key"),
+    cert: fs.readFileSync("./ssl/server.cert"),
+  };
+} catch (err) {
+  console.warn("⚠️  SSL certificates not found, running in HTTP-only mode.");
+  sslOptions = null;
+}
 
 dotenv.config({ path: ".env.local" }); // Load .env variables
 
@@ -221,7 +227,9 @@ app.listen(http_port, "0.0.0.0", () => {
   console.log(`HTTP server running at http://${localIp}:${http_port}`);
 });
 
-// Start HTTPS server
-https.createServer(sslOptions, app).listen(https_port, () => {
-  console.log(`HTTPS server running at https://${hostname}:${https_port}`);
-});
+// Start HTTPS server only if SSL options are available
+if (sslOptions) {
+  https.createServer(sslOptions, app).listen(https_port, () => {
+    console.log(`HTTPS server running at https://${hostname}:${https_port}`);
+  });
+}
