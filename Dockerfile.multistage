@@ -1,0 +1,57 @@
+# syntax=docker/dockerfile:1
+
+# Build stage - compile native modules
+FROM node:18.20.4-bullseye AS builder
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y \
+    python3 \
+    make \
+    g++ \
+    libc6-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copy package files and install all dependencies (including dev dependencies)
+COPY package*.json ./
+RUN npm ci
+
+# Copy source code
+COPY . .
+
+# Production stage - minimal runtime
+FROM node:18.20.4-bullseye-slim AS production
+
+# Use production node environment
+ENV NODE_ENV=production
+
+# Install runtime dependencies for SAP HANA client
+RUN apt-get update && apt-get install -y \
+    curl \
+    libc6 \
+    libgcc-s1 \
+    libstdc++6 \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copy built node_modules and application from builder stage
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/package*.json ./
+COPY --from=builder /app/index.js ./
+
+# Create non-root user for security
+RUN groupadd -r appuser && useradd -r -g appuser appuser
+RUN chown -R appuser:appuser /app
+USER appuser
+
+# Expose ports
+EXPOSE 80 443
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+  CMD curl -f http://localhost:80/ || exit 1
+
+# Run the application
+CMD ["node", "index.js"] 
