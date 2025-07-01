@@ -2,23 +2,94 @@
 # If you need more help, visit the Docker Compose reference guide at
 # https://docs.docker.com/go/compose-spec-reference/
 
-# Here the instructions define your application as a service called "server".
-# This service is built from the Dockerfile in the current directory.
-# You can add other services your application may depend on here, such as a
-# database or a cache. For examples, see the Awesome Compose repository:
-# https://github.com/docker/awesome-compose
+# Docker Compose configuration optimized for Windows Server deployment
+# Run with: docker-compose up -d
+
 services:
-  server:
+  neomir-hana-gateway:
     build:
       context: .
+      dockerfile: Dockerfile.multistage
+    container_name: neomir-hana-gateway
+    restart: unless-stopped
     environment:
       NODE_ENV: production
+      # Add any additional environment variables here
+      TZ: UTC
     ports:
-      - 80:80
-      - 443:443
+      - "80:80"
+      - "443:443"
     volumes:
-      - ${SSL_PATH:-./ssl}:/app/ssl
-      - ${ENV_FILE:-./env.local}:/app/.env.local
+      # Windows-style path mounting (supports both Windows and Linux Docker)
+      # SSL certificates - create an 'ssl' folder in your project directory
+      - type: bind
+        source: ${SSL_PATH:-./ssl}
+        target: /app/ssl
+        read_only: true
+      # Environment configuration - create env.local file in your project directory  
+      - type: bind
+        source: ${ENV_FILE:-./env.local}
+        target: /app/.env.local
+        read_only: true
+      # Optional: Mount logs directory for persistent logging
+      - type: bind
+        source: ${LOGS_PATH:-./logs}
+        target: /app/logs
+    # Health check configuration
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80/health", "||", "exit", "1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    # Resource limits (adjust based on your Windows Server specs)
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '1.0'
+        reservations:
+          memory: 512M
+          cpus: '0.5'
+    # Network configuration
+    networks:
+      - neomir-network
+    # Logging configuration for Windows Server
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+# Custom network for better isolation
+networks:
+  neomir-network:
+    driver: bridge
+    name: neomir-network
+
+# Example of how to add a database service if needed in the future
+# Uncomment and modify as needed
+#   database:
+#     image: postgres:15-alpine
+#     container_name: neomir-db
+#     restart: unless-stopped
+#     environment:
+#       POSTGRES_DB: ${DB_NAME:-neomir}
+#       POSTGRES_USER: ${DB_USER:-neomir}
+#       POSTGRES_PASSWORD: ${DB_PASSWORD:-your-secure-password}
+#     ports:
+#       - "5432:5432"
+#     volumes:
+#       - type: bind
+#         source: ${DB_DATA_PATH:-./data/postgres}
+#         target: /var/lib/postgresql/data
+#     networks:
+#       - neomir-network
+#     healthcheck:
+#       test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-neomir}"]
+#       interval: 30s
+#       timeout: 10s
+#       retries: 5
 
 # The commented out section below is an example of how to define a PostgreSQL
 # database that your application can use. `depends_on` tells Docker Compose to
