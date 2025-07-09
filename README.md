@@ -82,6 +82,136 @@ cd <your-repo-folder>`
 
    If you go to [https://localhost:443](https://localhost:443) on your server's browser, you should now see a page saying "Neomir HANA Gateway Server!".
 
+## Docker Deployment (Recommended)
+
+For easier deployment and management, we recommend using Docker with our pre-built image:
+
+### Quick Start
+```bash
+# Create a working directory
+mkdir neomir-hana-gateway
+cd neomir-hana-gateway
+
+# Download the docker-compose configuration
+curl -O https://raw.githubusercontent.com/neomir-pe/neomir-hana-gateway/main/compose.yaml
+
+# Create your environment file
+curl -O https://raw.githubusercontent.com/neomir-pe/neomir-hana-gateway/main/.env.template
+mv .env.template env.local
+# Edit env.local with your configuration
+
+# Create optional directories
+mkdir ssl    # Optional: for SSL certificates (server.cert, server.key)
+mkdir logs   # Optional: for persistent logging
+
+# Generate your encryption keys (required for env.local)
+# Visit these URLs to generate your keys:
+# DECRYPTION_KEY: https://www.random.org/cgi-bin/randbyte?nbytes=32&format=h
+# DECRYPTION_IV: https://www.random.org/cgi-bin/randbyte?nbytes=16&format=h
+
+# Deploy with Docker Compose
+docker-compose up -d
+```
+
+### Alternative: Direct Docker Run
+```bash
+# For simpler deployments without automated updates
+docker run -d \
+  --name neomir-hana-gateway \
+  -p 80:80 \
+  -p 443:443 \
+  --env-file env.local \
+  jrneomir/neomir-hana-gateway
+```
+
+### Using Docker Compose
+```bash
+# Download the docker-compose configuration
+curl -O https://raw.githubusercontent.com/neomir-pe/neomir-hana-gateway/main/compose.yaml
+
+# Deploy with Docker Compose
+docker-compose up -d
+```
+
+### Features
+- **Pre-built Image**: Ready-to-use Docker image from Docker Hub
+- **Automated Updates**: Includes Watchtower for automatic container updates
+- **Health Monitoring**: Built-in health checks and restart policies
+- **Resource Management**: Configurable CPU and memory limits
+- **SSL Support**: Easy SSL certificate mounting with HTTP fallback
+- **Logging**: Structured logging with log rotation
+- **Custom Paths**: Configurable file paths for SSL certificates and environment files
+- **Windows Optimized**: Compose configuration optimized for Windows Server deployment
+
+### Management Commands
+```bash
+# Check status
+docker-compose ps
+
+# View logs
+docker-compose logs -f neomir-hana-gateway
+
+# Update to latest version (automated by Watchtower, or manually)
+docker-compose pull && docker-compose up -d
+
+# Stop services
+docker-compose down
+
+# Alternative: Direct Docker commands
+# Check status
+docker ps
+
+# View logs
+docker logs -f neomir-hana-gateway
+
+# Stop container
+docker stop neomir-hana-gateway
+```
+
+### Configuration Options
+
+#### Custom File Paths
+The Docker setup supports custom file paths through environment variables:
+
+```bash
+# Set custom paths before running Docker Compose
+export SSL_PATH=/path/to/your/ssl/certificates
+export ENV_FILE=/path/to/your/.env.local
+export LOGS_PATH=/path/to/your/logs
+docker-compose up -d
+```
+
+Or create a `.env` file in the same directory as `compose.yaml`:
+```bash
+# .env file contents
+SSL_PATH=/home/user/ssl
+ENV_FILE=/home/user/config/.env.local
+LOGS_PATH=/home/user/logs
+```
+
+#### Environment File Setup
+Your `env.local` file should contain:
+```bash
+HTTP_PORT=80
+HTTPS_PORT=443
+DECRYPTION_KEY=your_32_byte_hex_key_here
+DECRYPTION_IV=your_16_byte_hex_iv_here
+```
+
+#### SSL Certificate Setup (Optional)
+For HTTPS support, place your SSL files in the `ssl/` directory:
+- `server.key` - Your SSL private key
+- `server.cert` - Your SSL certificate
+
+**Note**: If SSL certificates are not found, the server automatically runs in HTTP-only mode.
+
+#### Important Notes
+- Ensure the Docker process can read your SSL certificates and environment files
+- The server gracefully falls back to HTTP-only if SSL certificates are missing
+- Keep sensitive files (SSL keys, environment variables) secure with proper file permissions
+
+For detailed Docker deployment instructions on Windows, see [WINDOWS-DEPLOYMENT.md](WINDOWS-DEPLOYMENT.md).
+
 ## Hardware Recommendations
 
 |             | **Minimum Requirements**              | **Medium-Scale Deployments**                           | **Large-Scale Deployments**                                                  |

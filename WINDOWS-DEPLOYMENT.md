@@ -53,20 +53,12 @@ Place your SSL certificates in the `ssl` directory:
 - `ssl/private.key`
 - `ssl/ca-bundle.crt` (if needed)
 
-### 4. Optional: Create Environment Variables File
-Create `.env` file for Docker Compose variables:
 ```
 # SSL Certificate paths
 SSL_PATH=./ssl
 ENV_FILE=./env.local
 LOGS_PATH=./logs
 
-# Database settings (if using database service)
-DB_NAME=neomir
-DB_USER=neomir
-DB_PASSWORD=your-secure-database-password
-DB_DATA_PATH=./data/postgres
-```
 
 ## Deployment Commands
 
@@ -99,6 +91,70 @@ docker stats neomir-hana-gateway
 docker system prune -f
 ```
 
+## Automated Updates with Watchtower
+
+The deployment now includes Watchtower for automated container updates:
+
+### Features
+- **Automatic Updates**: Checks for new images every hour by default
+- **Selective Monitoring**: Only monitors the neomir-hana-gateway container
+- **Clean Deployment**: Removes old images after successful updates
+- **Rolling Updates**: Updates containers one by one to minimize downtime
+- **Health Checks**: Respects container health checks during updates
+
+### Watchtower Management Commands
+```powershell
+# Check Watchtower status
+docker-compose ps watchtower
+
+# View Watchtower logs
+docker-compose logs -f watchtower
+
+# Trigger immediate update check
+docker-compose exec watchtower watchtower --run-once
+
+# Stop Watchtower temporarily
+docker-compose stop watchtower
+
+# Restart Watchtower
+docker-compose start watchtower
+
+# Remove Watchtower completely
+docker-compose rm watchtower
+```
+
+### Configuration Options
+
+You can customize Watchtower behavior by modifying the environment variables in `compose.yaml`:
+
+```yaml
+environment:
+  WATCHTOWER_POLL_INTERVAL: 3600  # Update check interval in seconds (1 hour)
+  WATCHTOWER_CLEANUP: "true"      # Remove old images after update
+  WATCHTOWER_DEBUG: "false"       # Enable debug logging
+  WATCHTOWER_ROLLING_RESTART: "true"  # Update containers one by one
+```
+
+### Windows Docker Desktop Considerations
+
+If using Docker Desktop on Windows, you may need to adjust the Docker socket path:
+```yaml
+volumes:
+  # Use this for Docker Desktop
+  - //./pipe/docker_engine:/var/run/docker.sock
+  # Or this for standard Docker Engine
+  - /var/run/docker.sock:/var/run/docker.sock
+```
+
+### Monitoring Update Activity
+
+Create a PowerShell script to monitor Watchtower activity:
+```powershell
+# monitor-watchtower.ps1
+Write-Host "Monitoring Watchtower activity..."
+docker-compose logs -f watchtower | Select-String "Updated\|Updating\|Stopped\|Started"
+```
+
 ## Windows Server Specific Optimizations
 
 ### 1. Windows Firewall Configuration
@@ -122,17 +178,6 @@ $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoi
 Register-ScheduledTask -TaskName "Neomir HANA Gateway" -Action $action -Trigger $trigger -Settings $settings -RunLevel Highest
 ```
 
-### 3. Performance Monitoring
-```powershell
-# Monitor Docker containers
-docker-compose top
-
-# Monitor system resources
-Get-Counter "\Processor(_Total)\% Processor Time", "\Memory\Available MBytes"
-
-# Monitor Docker logs with PowerShell
-docker-compose logs -f --tail=100 neomir-hana-gateway
-```
 
 ## Troubleshooting
 
@@ -181,7 +226,3 @@ Adjust resource limits in `compose.yaml` based on your Windows Server specs.
 Copy-Item "compose.yaml" ".\backups\compose.yaml.backup"
 Copy-Item "env.local" ".\backups\env.local.backup"
 Copy-Item "ssl" ".\backups\ssl" -Recurse
-
-# Backup application data (if using database)
-docker-compose exec database pg_dump -U $env:DB_USER $env:DB_NAME > ".\backups\database_backup_$(Get-Date -Format 'yyyyMMdd_HHmmss').sql"
-``` 
